@@ -52,17 +52,24 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أرسل ملف حتى أترجمه 📄➡️🇸🇦")
 
-def main():
+import asyncio
+
+async def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
-    app.run_webhook(
+    await app.initialize()
+    await app.start()
+
+    await app.bot.set_webhook("https://telegram-trans-bot-truv.onrender.com")
+
+    await app.run_webhook(
         listen="0.0.0.0",
         port=int(os.environ.get("PORT", 10000)),
-        webhook_url="https://telegram-trans-bot-truv.onrender.com"
     )
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
+
