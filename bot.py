@@ -1,58 +1,34 @@
+from flask import Flask, request
+from telegram import Bot, Update
+from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters
 import os
-import logging
-from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
-from PyPDF2 import PdfReader
-from deep_translator import GoogleTranslator
 
-# Logging بسيط
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+TOKEN = os.environ.get("BOT_TOKEN")  # ⚠️ خلي TOKEN كمتغير بيئة على Render
+bot = Bot(token=TOKEN)
+app = Flask(__name__)
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-if not BOT_TOKEN:
-    raise ValueError("Please set the BOT_TOKEN environment variable!")
+# dispatcher بدون asyncio ليشتغل على Render 3.14 مباشرة
+dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
 
-async def translate_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يستقبل ملف PDF ويترجمه"""
-    message = update.message
-    if not message.document or not message.document.file_name.endswith(".pdf"):
-        await message.reply_text("من فضلك أرسل ملف PDF فقط!")
-        return
+def start(update, context):
+    update.message.reply_text("هلا! ابعثلي PDF حتى أترجمه.")
 
-    file = await message.document.get_file()
-    file_path = f"/tmp/{message.document.file_name}"
-    await file.download_to_drive(file_path)
+def handle_message(update, context):
+    text = update.message.text
+    update.message.reply_text(f"رسالتك: {text}")  # رح نبدلها بالترجمة بعدين
 
-    # قراءة النص من PDF
-    reader = PdfReader(file_path)
-    text = ""
-    for page in reader.pages:
-        text += page.extract_text() + "\n"
+dispatcher.add_handler(CommandHandler("start", start))
+dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    if not text.strip():
-        await message.reply_text("الملف فارغ أو لا يمكن قراءة النص منه.")
-        return
+@app.route(f"/{TOKEN}", methods=["POST"])
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    dispatcher.process_update(update)
+    return "ok"
 
-    # ترجمة النص
-    translated = GoogleTranslator(source="auto", target="ar").translate(text)
-    await message.reply_text(translated[:4000])  # Telegram يقبل نص طويل حتى 4096 حرف
-
-def main():
-    logger.info("Starting bot...")
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
-
-    # أي رسالة فيها ملف PDF = الدالة translate_pdf
-    app.add_handler(MessageHandler(filters.Document.ALL, translate_pdf))
-
-    logger.info("Bot is running...")
-    # ⚡ شغالة مباشرة على Render بدون Flask
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000)),
-        url_path=BOT_TOKEN,
-        webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_URL')}/{BOT_TOKEN}"
-    )
+@app.route("/")
+def index():
+    return "Bot is running!"
 
 if __name__ == "__main__":
-    main()
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
