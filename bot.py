@@ -1,55 +1,91 @@
-# bot.py
 import os
-import asyncio
+import logging
 from flask import Flask, request
 from telegram import Update
-from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
+from telegram.ext import (
+    ApplicationBuilder,
+    MessageHandler,
+    ContextTypes,
+    filters,
+)
+from deep_translator import GoogleTranslator
+from PyPDF2 import PdfReader
 
-# ====== إعداد المتغيرات ======
-TOKEN = os.environ.get("BOT_TOKEN")  # خلي التوكن في Environment Variable
-WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # https://اسم_البوت_هنا.onrender.com
+# 🔹 إعدادات
+TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app.onrender.com
 
-if not TOKEN or not WEBHOOK_URL:
-    raise ValueError("Please set BOT_TOKEN and WEBHOOK_URL environment variables!")
-
-# ====== إعداد Flask و Telegram Bot ======
 app = Flask(__name__)
+logging.basicConfig(level=logging.INFO)
+
+# 🔹 إنشاء تطبيق البوت
 application = ApplicationBuilder().token(TOKEN).build()
 
-# ====== دالة الرد ======
-from deep_translator import GoogleTranslator
-
-async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# =========================
+# ✨ ترجمة النصوص
+# =========================
+async def translate_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
 
-    translated = GoogleTranslator(source='auto', target='en').translate(text)
+    translated = GoogleTranslator(source="auto", target="en").translate(text)
 
     await update.message.reply_text(translated)
 
-# إضافة Handler لأي رسالة نصية
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hello))
 
-# ====== Webhook route ======
+# =========================
+# ✨ ترجمة ملفات PDF
+# =========================
+async def translate_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = await update.message.document.get_file()
+
+    file_path = f"{update.message.document.file_id}.pdf"
+    await file.download_to_drive(file_path)
+
+    text = ""
+
+    reader = PdfReader(file_path)
+    for page in reader.pages:
+        page_text = page.extract_text()
+        if page_text:
+            text += page_text + "\n"
+
+    if not text.strip():
+        await update.message.reply_text("ما كدر أستخرج نص من الـ PDF")
+        os.remove(file_path)
+        return
+
+    translated = GoogleTranslator(source="auto", target="en").translate(text[:4000])
+
+    await update.message.reply_text(translated)
+
+    os.remove(file_path)
+
+
+# =========================
+# 🔹 إضافة الـ handlers
+# =========================
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, translate_text))
+application.add_handler(MessageHandler(filters.Document.PDF, translate_pdf))
+
+
+# =========================
+# 🔹 Webhook route
+# =========================
 @app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    """هذي endpoint للـ Telegram Webhook"""
-    data = request.get_json(force=True)
-    update = Update.de_json(data, application.bot)
-    asyncio.run(application.process_update(update))  # معالجة التحديث async
-    return "ok", 200
+async def webhook():
+    update = Update.de_json(request.get_json(force=True), application.bot)
+    await application.process_update(update)
+    return "ok"
 
-# صفحة رئيسية فقط للتأكد أن الخدمة شغالة
+
+# =========================
+# 🔹 تشغيل السيرفر + تعيين webhook
+# =========================
 @app.route("/")
-def index():
-    return "Bot is running ✅", 200
+def home():
+    return "Bot is running!"
 
-# ====== Main: تهيئة البوت + ضبط webhook ======
-async def main():
-    await application.initialize()
-    await application.bot.set_webhook(f"{WEBHOOK_URL}/{TOKEN}")  # ضبط الـ webhook
-    await application.start()
 
 if __name__ == "__main__":
-    # شغل Flask + البوت
-    asyncio.run(main())
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    application.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
+    app.run(host="0.0.0.0", port=10000)
