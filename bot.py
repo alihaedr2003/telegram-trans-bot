@@ -6,12 +6,13 @@ from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, fil
 from deep_translator import GoogleTranslator
 from PyPDF2 import PdfReader
 import tempfile
+import threading
 
-# Logging بسيط
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TOKEN = os.environ.get("BOT_TOKEN")  # ⚠️ لازم تحط التوكن في Environment Variables
+TOKEN = os.environ.get("BOT_TOKEN")
 if not TOKEN:
     raise ValueError("Please set the BOT_TOKEN environment variable!")
 
@@ -42,7 +43,6 @@ async def translate_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("الملف فارغ أو غير قابل للقراءة.")
             return
         translated = GoogleTranslator(source='auto', target='en').translate(text)
-        # Telegram limits: 4096 chars
         for i in range(0, len(translated), 4000):
             await update.message.reply_text(translated[i:i+4000])
 
@@ -52,7 +52,7 @@ application.add_handler(CommandHandler("start", start))
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, translate_text))
 application.add_handler(MessageHandler(filters.Document.PDF, translate_pdf))
 
-# --- Webhook Flask route ---
+# --- Webhook route ---
 @app.route(f"/{TOKEN}", methods=["POST"])
 def webhook():
     data = request.get_json(force=True)
@@ -60,13 +60,13 @@ def webhook():
     application.update_queue.put_nowait(update)
     return "OK"
 
-# --- إعداد Webhook على Telegram ---
-@app.before_first_request
+# --- تعيين webhook بعد ما يبدأ السيرفر ---
 def set_webhook():
     url = f"https://telegram-trans-bot-truv.onrender.com/{TOKEN}"
     bot.set_webhook(url=url)
     logger.info(f"Webhook set to: {url}")
 
-# --- تشغيل Flask ---
+# تشغيل Flask + تعيين webhook في Thread ثاني
 if __name__ == "__main__":
+    threading.Thread(target=set_webhook).start()
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
