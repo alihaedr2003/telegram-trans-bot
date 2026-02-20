@@ -1,66 +1,58 @@
 import os
-from flask import Flask, request
-from telegram import Update, Bot
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
+import logging
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from PyPDF2 import PdfReader
 from deep_translator import GoogleTranslator
+
+# Logging بسيط
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("Please set the BOT_TOKEN environment variable!")
 
-app = Flask(__name__)
-bot = Bot(token=BOT_TOKEN)
-application = ApplicationBuilder().token(BOT_TOKEN).build()
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("مرحبا! أرسل لي ملف PDF للترجمة.")
-
-async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    file = update.message.document
-    if not file.file_name.endswith(".pdf"):
-        await update.message.reply_text("يرجى إرسال ملف PDF فقط.")
+async def translate_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """يستقبل ملف PDF ويترجمه"""
+    message = update.message
+    if not message.document or not message.document.file_name.endswith(".pdf"):
+        await message.reply_text("من فضلك أرسل ملف PDF فقط!")
         return
 
-    file_path = f"/tmp/{file.file_name}"
-    await file.get_file().download_to_drive(file_path)
+    file = await message.document.get_file()
+    file_path = f"/tmp/{message.document.file_name}"
+    await file.download_to_drive(file_path)
 
+    # قراءة النص من PDF
     reader = PdfReader(file_path)
     text = ""
     for page in reader.pages:
         text += page.extract_text() + "\n"
 
     if not text.strip():
-        await update.message.reply_text("عذرًا، لم أتمكن من استخراج نص من هذا الملف.")
+        await message.reply_text("الملف فارغ أو لا يمكن قراءة النص منه.")
         return
 
-    translated_text = GoogleTranslator(source="auto", target="en").translate(text)
-    
-    if len(translated_text) > 4000:
-        for i in range(0, len(translated_text), 4000):
-            await update.message.reply_text(translated_text[i:i+4000])
-    else:
-        await update.message.reply_text(translated_text)
+    # ترجمة النص
+    translated = GoogleTranslator(source="auto", target="ar").translate(text)
+    await message.reply_text(translated[:4000])  # Telegram يقبل نص طويل حتى 4096 حرف
 
-async def echo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("أرسل لي ملف PDF للترجمة فقط.")
+def main():
+    logger.info("Starting bot...")
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-application.add_handler(CommandHandler("start", start))
-application.add_handler(MessageHandler(filters.Document.FileExtension("pdf"), handle_pdf))
-application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), echo))
+    # أي رسالة فيها ملف PDF = الدالة translate_pdf
+    app.add_handler(MessageHandler(filters.Document.ALL, translate_pdf))
 
-@app.route(f"/{BOT_TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    application.create_task(application.update_queue.put(update))
-    return "OK"
-
-@app.route("/")
-def index():
-    return "Bot is running!"
+    logger.info("Bot is running...")
+    # ⚡ شغالة مباشرة على Render بدون Flask
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        url_path=BOT_TOKEN,
+        webhook_url=f"https://{os.environ.get('RENDER_EXTERNAL_URL')}/{BOT_TOKEN}"
+    )
 
 if __name__ == "__main__":
-    webhook_url = f"https://https://telegram-trans-bot-truv.onrender.com/{BOT_TOKEN}"
-    bot.set_webhook(webhook_url)
-    print("Webhook set to:", webhook_url)
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+    main()
