@@ -35,7 +35,7 @@ def home():
 async def setup():
     await application.initialize()
     await application.bot.set_webhook(
-        url=f"https://telegram-trans-bot.onrender.com/{TOKEN}"
+        url=f"https://telegram-trans-bot.onrender.com{TOKEN}"
     )
 
 if __name__ == "__main__":
