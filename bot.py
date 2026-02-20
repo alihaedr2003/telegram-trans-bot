@@ -1,13 +1,11 @@
-from telegram.ext import Updater, MessageHandler, Filters
+import os
+from telegram import Update
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from deep_translator import GoogleTranslator
 from docx import Document
 import PyPDF2
-import os
 
 TOKEN = "8480545850:AAHN_sG0qKEjdiUAhSbMgY-HjSEplohscus"
-
-def translate_text(text):
-    return GoogleTranslator(source='en', target='ar').translate(text)
 
 def extract_text(file_path):
     text = ""
@@ -29,40 +27,42 @@ def extract_text(file_path):
 
     return text
 
-def handle_file(update, context):
-    file = update.message.document.get_file()
-    file_path = file.download()
+def translate_text(text):
+    return GoogleTranslator(source='en', target='ar').translate(text)
+
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    file = await update.message.document.get_file()
+    file_path = await file.download_to_drive()
 
     text = extract_text(file_path)
 
     if not text.strip():
-        update.message.reply_text("ما قدرت أستخرج نص ❌")
+        await update.message.reply_text("ما قدرت أستخرج نص ❌")
         return
 
-    update.message.reply_text("جاري الترجمة ⏳")
+    await update.message.reply_text("جاري الترجمة ⏳")
 
     translated = translate_text(text)
 
     with open("translated.txt", "w", encoding="utf-8") as f:
         f.write(translated)
 
-    update.message.reply_document(open("translated.txt", "rb"))
+    await update.message.reply_document(document=open("translated.txt", "rb"))
 
-def start(update, context):
-    update.message.reply_text("أرسل ملف حتى أترجمه من الإنكليزي للعربي 📄➡️🇸🇦")
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("أرسل ملف حتى أترجمه 📄➡️🇸🇦")
 
 def main():
-    updater = Updater(TOKEN, use_context=True)
-    dp = updater.dispatcher
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    dp.add_handler(MessageHandler(Filters.document, handle_file))
-    dp.add_handler(MessageHandler(Filters.text & ~Filters.command, start))
+    app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
-    PORT = int(os.environ.get("PORT", 10000))
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", 10000)),
+        webhook_url="https://telegram-trans-bot-truv.onrender.com"
+    )
 
-    updater.start_webhook(listen="0.0.0.0", port=PORT, url_path=TOKEN)
-    updater.bot.setWebhook("https://telegram-trans-bot-truv.onrender.com" + TOKEN)
-
-    updater.idle()
-
-main()
+if __name__ == "__main__":
+    main()
