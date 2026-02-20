@@ -2,3 +2,4 @@ python-telegram-bot==21.6
 deep-translator
 python-docx
 PyPDF2
+flask
