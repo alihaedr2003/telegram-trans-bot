@@ -1,43 +1,41 @@
 import os
 import logging
-import asyncio
 from flask import Flask, request
 from telegram import Update, Bot
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("BOT_TOKEN not set!")
-
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+
+TOKEN = os.getenv("BOT_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # تحطه في Render
 
 app = Flask(__name__)
 bot = Bot(token=TOKEN)
 application = ApplicationBuilder().token(TOKEN).build()
 
+# دالة الرد
 async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("مرحبا 👋")
 
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hello))
 
+# Flask route (لازم يكون بنفس مسار التوكن)
 @app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
-    data = request.get_json(force=True)
-    update = Update.de_json(data, bot)
-    await application.process_update(update)
+def webhook():
+    update = Update.de_json(request.get_json(force=True), bot)
+    application.process_update(update)
     return "ok"
 
+# تفعيل webhook عند التشغيل
 @app.route("/")
-def home():
+def index():
     return "Bot is running"
 
-async def setup():
-    await application.initialize()
-    await application.bot.set_webhook(
-        url=f"https://telegram-trans-bot.onrender.com{TOKEN}"
-    )
+async def setup_webhook():
+    await bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
 
 if __name__ == "__main__":
-    asyncio.run(setup())
+    import asyncio
+
+    asyncio.run(setup_webhook())
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
