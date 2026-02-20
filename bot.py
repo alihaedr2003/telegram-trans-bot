@@ -17,9 +17,14 @@ app = Flask(__name__)
 application = ApplicationBuilder().token(TOKEN).build()
 
 # ====== دالة الرد ======
+from deep_translator import GoogleTranslator
+
 async def hello(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """يرد على أي رسالة نصية بمرحبا"""
-    await update.message.reply_text("مرحبا 👋")
+    text = update.message.text
+
+    translated = GoogleTranslator(source='auto', target='en').translate(text)
+
+    await update.message.reply_text(translated)
 
 # إضافة Handler لأي رسالة نصية
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hello))
