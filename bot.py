@@ -1,91 +1,58 @@
-import os
 import logging
-from flask import Flask, request
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    MessageHandler,
-    ContextTypes,
-    filters,
-)
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 from deep_translator import GoogleTranslator
-from PyPDF2 import PdfReader
+import PyPDF2
+import io
 
-# 🔹 إعدادات
-TOKEN = os.getenv("BOT_TOKEN")
-WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app.onrender.com
-
-app = Flask(__name__)
+# Logging
 logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# 🔹 إنشاء تطبيق البوت
-application = ApplicationBuilder().token(TOKEN).build()
+# استخدم environment variable أو حط التوكن هنا مؤقتاً
+import os
+TOKEN = os.environ.get("BOT_TOKEN")  # خليه بالمتغيرات على Render
 
-# =========================
-# ✨ ترجمة النصوص
-# =========================
-async def translate_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
+# الرد على النصوص العادية
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info(f"Message from {update.effective_user.id}: {update.message.text}")
+    await update.message.reply_text("مرحبا! 👋\nارسل ملف PDF لأتمكن من ترجمته 📄➡️🇦🇪")
 
-    translated = GoogleTranslator(source="auto", target="en").translate(text)
-
-    await update.message.reply_text(translated)
-
-
-# =========================
-# ✨ ترجمة ملفات PDF
-# =========================
+# ترجمة ملفات PDF
 async def translate_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    file = await update.message.document.get_file()
+    if update.message.document:
+        file = await context.bot.get_file(update.message.document.file_id)
+        pdf_bytes = await file.download_as_bytearray()
+        pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+        text = ""
+        for page in pdf_reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
 
-    file_path = f"{update.message.document.file_id}.pdf"
-    await file.download_to_drive(file_path)
+        if text.strip() == "":
+            await update.message.reply_text("الملف فارغ أو لا يمكن قراءته 😕")
+            return
 
-    text = ""
+        translated = GoogleTranslator(source="auto", target="ar").translate(text)
+        # Telegram يحد الرسائل بـ 4096 حرف، فنقسم الرسالة إذا طويلة
+        for i in range(0, len(translated), 4000):
+            await update.message.reply_text(translated[i:i+4000])
+    else:
+        await update.message.reply_text("ارسل ملف PDF لأتمكن من ترجمته 📄➡️🇦🇪")
 
-    reader = PdfReader(file_path)
-    for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
+# الدالة الرئيسية async
+async def main():
+    app = ApplicationBuilder().token(TOKEN).build()
 
-    if not text.strip():
-        await update.message.reply_text("ما كدر أستخرج نص من الـ PDF")
-        os.remove(file_path)
-        return
+    # أي رسالة نصية → الرد النصي
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
+    # أي ملف PDF → الترجمة
+    app.add_handler(MessageHandler(filters.Document.PDF, translate_pdf))
 
-    translated = GoogleTranslator(source="auto", target="en").translate(text[:4000])
-
-    await update.message.reply_text(translated)
-
-    os.remove(file_path)
-
-
-# =========================
-# 🔹 إضافة الـ handlers
-# =========================
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, translate_text))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, "hello"))
-
-
-# =========================
-# 🔹 Webhook route
-# =========================
-@app.route(f"/{TOKEN}", methods=["POST"])
-async def webhook():
-    update = Update.de_json(request.get_json(force=True), application.bot)
-    await application.process_update(update)
-    return "ok"
-
-
-# =========================
-# 🔹 تشغيل السيرفر + تعيين webhook
-# =========================
-@app.route("/")
-def home():
-    return "Bot is running!"
-
+    logger.info("Bot is running...")
+    await app.run_polling()
 
 if __name__ == "__main__":
-    application.bot.set_webhook(url=f"{WEBHOOK_URL}/{TOKEN}")
-    app.run(host="0.0.0.0", port=10000)
+    import asyncio
+    asyncio.run(main())
