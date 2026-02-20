@@ -1,30 +1,47 @@
 import logging
+from googletrans import Translator
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
 
 # Configure logging
-logging.basicConfig(level=logging.DEBUG,
-                    format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+TOKEN = 'YOUR_TELEGRAM_BOT_TOKEN'
 
-def example_function(arg1, arg2):
-    try:
-        logger.debug('Starting example_function with args: %s, %s', arg1, arg2)
-        # Function logic here
-        result = arg1 + arg2  # Example operation
-        logger.debug('Result of example_function: %s', result)
-        return result
-    except Exception as e:
-        logger.error('Error in example_function: %s', e)
-        raise
+async def extract_text(file):
+    logger.info('Extracting text from file...')
+    # Logic to extract text from .txt, .docx, .pdf files goes here.
+    logger.info('Text extraction complete.')
+    return extracted_text
 
+async def translate_text(text):
+    logger.info('Translating text...')
+    translator = Translator()
+    translated_text = translator.translate(text).text
+    logger.info('Translation complete.')
+    return translated_text
 
-def another_function(arg):
-    try:
-        logger.debug('Starting another_function with arg: %s', arg)
-        # Function logic here
-        logger.debug('Completed another_function successfully')
-    except Exception as e:
-        logger.error('Error in another_function: %s', e)
-        raise
+async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info('Handling file...')
+    file = update.effective_message.document.get_file()
+    logger.info(f'Retrieved file: {file.file_id}')
+    file.download('downloaded_file')
+    text = await extract_text('downloaded_file')
+    translated = await translate_text(text)
+    await update.message.reply_text(translated)
 
-# Add more functions as needed with similar logging patterns
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info('Bot started.')
+    await update.message.reply_text('Send me a file to translate!')
+
+def main():
+    logger.info('Starting bot...')
+    app = ApplicationBuilder().token(TOKEN).build()
+    app.add_handler(CommandHandler('start', start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
+    app.add_handler(MessageHandler(filters.DOCUMENT, handle_file))
+    app.run_polling()
+
+if __name__ == '__main__':
+    main()
