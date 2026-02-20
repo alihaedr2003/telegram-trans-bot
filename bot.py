@@ -1,34 +1,42 @@
-from flask import Flask, request
-from telegram import Bot, Update
-from telegram.ext import Dispatcher, CommandHandler, MessageHandler, filters
+from telegram import Update
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 import os
 
-TOKEN = os.environ.get("BOT_TOKEN")  # ⚠️ خلي TOKEN كمتغير بيئة على Render
-bot = Bot(token=TOKEN)
-app = Flask(__name__)
+# ⚠️ التوكن يُقرأ من متغير البيئة في Render
+BOT_TOKEN = os.environ["BOT_TOKEN"]
 
-# dispatcher بدون asyncio ليشتغل على Render 3.14 مباشرة
-dispatcher = Dispatcher(bot=bot, update_queue=None, use_context=True)
+# دالة الرد على /start
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "هلا! ابعثلي ملف PDF لأترجمه أو أي رسالة نصية للتجربة."
+    )
 
-def start(update, context):
-    update.message.reply_text("هلا! ابعثلي PDF حتى أترجمه.")
+# دالة التعامل مع ملفات PDF
+async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    document = update.message.document
+    if document.mime_type != "application/pdf":
+        await update.message.reply_text("هذا الملف مو PDF. حاول ترسل PDF.")
+        return
 
-def handle_message(update, context):
+    file = await context.bot.get_file(document.file_id)
+    file_path = f"./{document.file_name}"
+    await file.download_to_drive(file_path)
+    await update.message.reply_text(f"استلمت الملف: {document.file_name}\nهسه نقدر نبدأ الترجمة.")
+
+# دالة التعامل مع النصوص العادية
+async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    update.message.reply_text(f"رسالتك: {text}")  # رح نبدلها بالترجمة بعدين
+    await update.message.reply_text(f"رسالتك: {text}\nابعتلي PDF حتى أترجمه.")
 
-dispatcher.add_handler(CommandHandler("start", start))
-dispatcher.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+# بناء التطبيق
+app = ApplicationBuilder().token(BOT_TOKEN).build()
 
-@app.route(f"/{TOKEN}", methods=["POST"])
-def webhook():
-    update = Update.de_json(request.get_json(force=True), bot)
-    dispatcher.process_update(update)
-    return "ok"
+# إضافة الهاندلرز
+app.add_handler(CommandHandler("start", start))
+app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-@app.route("/")
-def index():
-    return "Bot is running!"
-
+# تشغيل البوت (polling)
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
+    print("Bot is running...")
+    app.run_polling()
