@@ -54,22 +54,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 import asyncio
 
-async def main():
+def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
-    await app.initialize()
-    await app.start()
-
-    await app.bot.set_webhook("https://telegram-trans-bot-truv.onrender.com")
-
-    await app.run_webhook(
-        listen="0.0.0.0",
-        port=int(os.environ.get("PORT", 10000)),
-    )
+    print("Bot started...")
+    app.run_polling()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
+
+
 
