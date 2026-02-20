@@ -65,7 +65,7 @@ async def translate_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # 🔹 إضافة الـ handlers
 # =========================
 application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, translate_text))
-application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, hello))
+application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, "hello"))
 
 
 # =========================
