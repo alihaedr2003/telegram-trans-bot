@@ -52,8 +52,6 @@ async def handle_file(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("أرسل ملف حتى أترجمه 📄➡️🇸🇦")
 
-import asyncio
-
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -61,11 +59,4 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, start))
 
     print("Bot started...")
-    asyncio.run(app.run_polling())
-
-if __name__ == "__main__":
-    main()
-
-
-
-
+    app.run_polling()
