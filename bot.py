@@ -71,30 +71,23 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for page in pdf_in:
             pdf_out.add_page()
-            
-            # 1. سحب النص ككتل (Blocks) للحفاظ على الإحداثيات المكانية
             blocks = page.get_text("blocks")
-            
-            # 2. ترتيب الكتل من الأعلى (Y=0) إلى الأسفل لضمان تسلسل الأسطر
-            blocks.sort(key=lambda b: b[1]) 
+            blocks.sort(key=lambda b: b[1])  # الحفاظ على الترتيب من الأعلى للأسفل
 
-            for b in blocks:
-                # b[4] هو النص الموجود داخل الكتلة
-                raw_text = b[4].strip()
+            # تجميع كل كتل الصفحة في نص واحد مع فواصل خاصة ليراها الـ AI
+            page_text = "\n\n".join([b[4].strip() for b in blocks if b[4].strip()])
+            
+            if page_text:
+                # طلب واحد فقط لكل صفحة (يعود سريعاً جداً)
+                translated_page = ai_translate_academic(page_text)
                 
-                if raw_text:
-                    # الترجمة الأكاديمية لكل كتلة بشكل مستقل
-                    translated = ai_translate_academic(raw_text)
-                    
-                    # معالجة اللغة العربية والاتجاه (RTL)
-                    final_text = process_arabic(translated)
-                    
-                    # 3. الكتابة في الـ PDF: استخدام عرض السطح بالكامل (0) 
-                    # الـ multi_cell هنا ستلتزم بمكانها ولن تقفز للأعلى
+                # تقسيم النص المترجم لفقرات لعرضه بشكل مرتب
+                paragraphs = translated_page.split('\n\n')
+                for para in paragraphs:
+                    final_text = process_arabic(para)
                     pdf_out.multi_cell(0, 8, text=final_text, align='R')
-                    
-                    # إضافة مسافة بسيطة بين الكتل لضمان عدم التداخل
                     pdf_out.ln(2)
+                    
 
         pdf_out.output(out_path)
         pdf_in.close()
