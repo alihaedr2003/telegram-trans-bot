@@ -19,36 +19,27 @@ def run_health_check_server():
 
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
-# --- إعداد Gemini المستقر ---
+# --- إعداد Gemini بالطريقة المضمونة ---
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 
-def final_translate_logic(text):
+def safe_translate(text):
     if not text or len(text.strip()) < 10: return text
-    # برومبت أكاديمي دقيق
-    prompt = f"Translate to medical Arabic. Return ONLY the translation:\n\n{text}"
-    
-    # محاولة الاستدعاء عبر الموديل الأكثر استقراراً عالمياً
+    # نستخدم الموديل بدون بادئة models/ لضمان التوافق
+    model = genai.GenerativeModel('gemini-pro')
     try:
-        model = genai.GenerativeModel('models/gemini-1.5-flash')
-        response = model.generate_content(prompt)
-        return response.text
-    except Exception:
-        try:
-            # محاولة احتياطية لموديل برو
-            model = genai.GenerativeModel('models/gemini-pro')
-            response = model.generate_content(prompt)
-            return response.text
-        except Exception as e:
-            return f"⚠️ خطأ فني: {str(e)[:30]}"
+        response = model.generate_content(f"Translate to medical Arabic:\n\n{text}")
+        return response.text if response.text else "⚠️ فشل في الرد"
+    except Exception as e:
+        return f"⚠️ API Error: {str(e)[:30]}"
 
 def process_arabic(text):
     return get_display(reshape(text))
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("🔬 جاري الترجمة.. سأحدثك بعد كل صفحة.")
+    status_msg = await update.message.reply_text("🔬 جاري البدء بالنسخة المستقرة...")
     doc_tg = update.message.document
     in_path = os.path.join("/tmp", doc_tg.file_name)
-    out_path = os.path.join("/tmp", f"Fixed_{doc_tg.file_name}")
+    out_path = os.path.join("/tmp", f"Fixed_Final_{doc_tg.file_name}")
 
     try:
         file_info = await context.bot.get_file(doc_tg.file_id)
@@ -60,17 +51,18 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for i, page in enumerate(pdf_in):
             pdf_out.add_page()
-            # ترتيب الأسطر كما في ورقة البكتيريا الناجحة
             blocks = page.get_text("blocks")
-            blocks.sort(key=lambda b: b[1]) 
+            blocks.sort(key=lambda b: b[1]) # الترتيب الصحيح
             
+            # تجميع نص الصفحة لتقليل عدد الطلبات
             page_text = " ".join([b[4].strip() for b in blocks if b[4].strip()])
+            
             if page_text:
-                translated = final_translate_logic(page_text)
+                translated = safe_translate(page_text)
                 pdf_out.multi_cell(0, 10, text=process_arabic(translated), align='R')
             
-            await status_msg.edit_text(f"⏳ الصفحة {i+1} من {len(pdf_in)} اكتملت.")
-            time.sleep(4)
+            await status_msg.edit_text(f"⏳ تمت معالجة الصفحة {i+1} من {len(pdf_in)}...")
+            time.sleep(5) # تأخير لضمان استقرار الحساب المجاني
 
         pdf_out.output(out_path)
         pdf_in.close()
@@ -78,7 +70,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_document(chat_id=update.message.chat_id, document=f)
         await status_msg.delete()
     except Exception as e:
-        await update.message.reply_text(f"🔥 تعذر الإكمال: {str(e)}")
+        await update.message.reply_text(f"🔥 خطأ: {str(e)}")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(os.environ.get("BOT_TOKEN")).build()
