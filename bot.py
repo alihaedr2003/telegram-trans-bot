@@ -3,95 +3,81 @@ import threading
 import http.server
 import socketserver
 import fitz  # PyMuPDF
+import google.generativeai as genai
 from fpdf import FPDF
 from arabic_reshaper import reshape
 from bidi.algorithm import get_display
-from deep_translator import GoogleTranslator
 from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# خادم الـ Health Check لـ Render
+# إعداد الذكاء الاصطناعي
+genai.configure(api_key=os.environ.get("AIzaSyA6QhTcf4g0TxV99m0xczGiKLY9pGs4chk"))
+model = genai.GenerativeModel('gemini-pro')
+
 def run_health_check_server():
     port = int(os.environ.get("PORT", 8080))
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
+    with socketserver.TCPServer(("", port), http.server.SimpleHTTPRequestHandler) as httpd:
         httpd.serve_forever()
 
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
+def ai_translate(text):
+    """ترجمة أكاديمية باستخدام الذكاء الاصطناعي"""
+    prompt = f"ترجم النص الطبي التالي إلى لغة عربية أكاديمية رصينة ومفهومة، مع الحفاظ على المصطلحات العلمية بين قوسين عند الضرورة: \n\n {text}"
+    try:
+        response = model.generate_content(prompt)
+        return response.text
+    except:
+        return text # العودة للنص الأصلي في حال الفشل
 
-def process_arabic_text(text):
-    """معالجة النص ليكون مرتباً من اليمين لليسار وبحروف متصلة"""
+def process_arabic(text):
     if not text: return ""
-    reshaped = reshape(text)  # ربط الحروف
-    bidi_text = get_display(reshaped)  # ضبط اتجاه الجملة (عربي + إنجليزي)
-    return bidi_text
+    return get_display(reshape(text))
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    print(f"📥 ملف جديد من: {update.message.chat_id}")
-    status_msg = await update.message.reply_text("📏 جاري إعادة ترتيب وترجمة النص أكاديمياً...")
+    status_msg = await update.message.reply_text("🧠 جاري الترجمة باستخدام الذكاء الاصطناعي لجميع صفحات الملف...")
     
-    document_tg = update.message.document
-    input_path = os.path.join("/tmp", document_tg.file_name)
-    output_path = os.path.join("/tmp", f"Fixed_{document_tg.file_name}")
+    doc_tg = update.message.document
+    in_path = os.path.join("/tmp", doc_tg.file_name)
+    out_path = os.path.join("/tmp", f"AI_Translated_{doc_tg.file_name}")
 
     try:
-        tg_file = await context.bot.get_file(document_tg.file_id)
-        await tg_file.download_to_drive(input_path)
+        file_info = await context.bot.get_file(doc_tg.file_id)
+        await file_info.download_to_drive(in_path)
 
-        pdf_in = fitz.open(input_path)
+        pdf_in = fitz.open(in_path)
         pdf_out = FPDF()
-        pdf_out.set_auto_page_break(auto=True, margin=15)
-        
-        # استخدام اسم الخط الخاص بك
-        font_name = "alfont_com_arial-1.ttf"
-        try:
-            pdf_out.add_font('CustomArial', '', font_name, uni=True)
-            pdf_out.set_font('CustomArial', size=11)
-        except Exception as e:
-            await status_msg.edit_text(f"❌ خطأ: لم يتم العثور على ملف الخط {font_name}")
-            return
+        pdf_out.add_font('CustomArial', '', 'alfont_com_arial-1.ttf', uni=True)
+        pdf_out.set_font('CustomArial', size=11)
 
-        translator = GoogleTranslator(source='auto', target='ar')
-
-        for page in pdf_in:
+        # معالجة كافة الصفحات
+        for page_num in range(len(pdf_in)):
+            page = pdf_in[page_num]
             pdf_out.add_page()
-            # استخراج النص كـ 'blocks' للحفاظ على ترتيب الفقرات
+            
             blocks = page.get_text("blocks")
-            blocks.sort(key=lambda b: (b[1], b[0])) # الترتيب من الأعلى للأسفل
+            blocks.sort(key=lambda b: (b[1], b[0]))
 
             for b in blocks:
-                # b[4] هو النص، نقوم بإزالة الفواصل السطرية الزائدة لدمج الفقرة
                 raw_text = b[4].replace('\n', ' ').strip()
-                
-                if len(raw_text) > 20: # تجاهل الرموز والكلمات المفردة المبعثرة
-                    translated = translator.translate(raw_text)
-                    # تحويل النص ليكون مرتباً (Right-to-Left)
-                    final_text = process_arabic_text(translated)
-                    
-                    # الكتابة في الـ PDF مع محاذاة لليمين 'R'
-                    pdf_out.multi_cell(0, 7, txt=final_text, align='R')
-                    pdf_out.ln(2) # مسافة بسيطة بين الكتل
+                if len(raw_text) > 30:
+                    # استخدام الذكاء الاصطناعي هنا
+                    translated = ai_translate(raw_text)
+                    final_text = process_arabic(translated)
+                    pdf_out.multi_cell(0, 8, txt=final_text, align='R')
+                    pdf_out.ln(4)
 
-        pdf_out.output(output_path)
+        pdf_out.output(out_path)
         pdf_in.close()
 
-        await status_msg.edit_text("✅ اكتملت الترجمة والترتيب.")
-        with open(output_path, "rb") as f:
-            await context.bot.send_document(chat_id=update.message.chat_id, document=f)
-        
-        os.remove(input_path)
-        os.remove(output_path)
+        await context.bot.send_document(chat_id=update.message.chat_id, document=open(out_path, "rb"))
         await status_msg.delete()
 
     except Exception as e:
-        await status_msg.edit_text(f"حدث خطأ في التنسيق: {str(e)}")
+        await status_msg.edit_text(f"خطأ: {str(e)}")
 
 if __name__ == "__main__":
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    TOKEN = os.environ.get("BOT_TOKEN")
+    app = ApplicationBuilder().token(TOKEN).build()
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    
-    print("🚀 البوت انطلق بالنسخة المرتبة...")
-    # تنظيف أي رسائل سابقة لمنع التداخل
     app.run_polling(drop_pending_updates=True)
