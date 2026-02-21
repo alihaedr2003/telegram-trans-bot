@@ -73,9 +73,19 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pdf_out.add_page()
             text_content = page.get_text("text")
             if text_content.strip():
+                # الترجمة عبر Gemini
                 translated = ai_translate_academic(text_content)
-                final_text = process_arabic(translated)
-                pdf_out.multi_cell(0, 8, text=final_text, align='R')
+                
+                # إصلاح التقديم والتأخير: نقوم بتقسيم النص المترجم لفقرات
+                paragraphs = translated.split('\n')
+                for para in paragraphs:
+                    if para.strip():
+                        # معالجة كل فقرة على حدة لضمان عدم تداخل الأسطر
+                        final_text = process_arabic(para)
+                        # استخدام multi_cell مع تحديد العرض بدقة لمنع الارتداد للسطر الأعلى
+                        pdf_out.multi_cell(0, 8, text=final_text, align='R')
+                        pdf_out.ln(1) # إضافة فراغ بسيط بين الفقرات للوضوح
+
             
         pdf_out.output(out_path)
         pdf_in.close()
