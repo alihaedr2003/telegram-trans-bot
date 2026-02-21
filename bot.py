@@ -50,7 +50,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # إذا لم يتوفر الخط، سيستخدم البوت الخط الافتراضي (وقد لا يظهر النص العربي)
         # سأفترض هنا أنك رفعت ملف خط باسم 'arial.ttf' مع الكود
         try:
-            pdf_out.add_font('Arial', '', 'arial.ttf', uni=True)
+            pdf_out.add_font('Arial', '', 'alfont_com_arial-1.ttf', uni=True)
             pdf_out.set_font('Arial', size=12)
         except:
             pdf_out.set_font("Helvetica", size=12)
