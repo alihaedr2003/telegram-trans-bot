@@ -56,7 +56,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # تحميل الخط العربي (يجب رفع ملف arial.ttf بجانب الكود)
         try:
-            pdf_out.add_font('Arial', '', 'arial.ttf', uni=True)
+            pdf_out.add_font('Arial', '', 'alfont_com_arial-1.ttf', uni=True)
             pdf_out.set_font('Arial', size=11)
         except:
             await status_msg.edit_text("❌ خطأ: ملف الخط arial.ttf غير موجود في المستودع.")
