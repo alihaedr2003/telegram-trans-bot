@@ -1,8 +1,6 @@
+google-generativeai
 python-telegram-bot==20.8
-httpx>=0.26.0
-httpcore>=1.0.0
 PyMuPDF
-deep-translator
 fpdf2
 arabic-reshaper
 python-bidi
