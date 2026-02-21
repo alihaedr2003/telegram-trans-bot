@@ -11,7 +11,7 @@ from bidi.algorithm import get_display
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# --- 1. خادم المنفذ ---
+# --- 1. خادم المنفذ لـ Render ---
 def run_health_check_server():
     port = int(os.environ.get("PORT", 8080))
     handler = http.server.SimpleHTTPRequestHandler
@@ -20,25 +20,39 @@ def run_health_check_server():
 
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
-# --- 2. إعداد Gemini (المجاني والقوي) ---
+# --- 2. إعداد Gemini مع نظام كشف الموديلات ---
 genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
-model = genai.GenerativeModel('gemini-1.5-flash')
 
-def translate_page_gemini(text):
-    if not text or len(text.strip()) < 10: return text
-    prompt = f"Translate this medical text to academic Arabic. Return ONLY Arabic:\n\n{text}"
+def get_working_model():
+    # محاولة تجربة الموديلات المتاحة لتجنب خطأ 404
+    models_to_try = ['gemini-1.5-flash', 'gemini-pro', 'gemini-1.0-pro']
+    for m in models_to_try:
+        try:
+            model = genai.GenerativeModel(m)
+            # تجربة فحص بسيطة
+            model.generate_content("test")
+            return model
+        except:
+            continue
+    return genai.GenerativeModel('gemini-pro')
+
+ai_model = get_working_model()
+
+def translate_safe(text):
+    if not text or len(text.strip()) < 5: return text
+    prompt = f"Translate to academic medical Arabic. Output ONLY Arabic:\n\n{text}"
     try:
-        response = model.generate_content(prompt)
+        response = ai_model.generate_content(prompt)
         return response.text if response.text else text
     except Exception as e:
-        return f"⚠️ Gemini Error: {str(e)[:30]}"
+        return f"⚠️ Error: {str(e)[:30]}"
 
 def process_arabic(text):
     return get_display(reshape(text))
 
-# --- 3. المعالجة الذكية (منع الـ 80 صفحة وعلاج العكس) ---
+# --- 3. معالجة الـ PDF (نظام الـ 8 صفحات والترتيب الصحيح) ---
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("🧬 جاري الترجمة بجيميني (نظام الصفحة الواحدة)...")
+    status_msg = await update.message.reply_text("🔬 جاري الترجمة بجيميني... نظام الترتيب مفعل.")
     
     doc_tg = update.message.document
     in_path = os.path.join("/tmp", doc_tg.file_name)
@@ -54,35 +68,34 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pdf_out.set_font('CustomArial', size=11)
 
         for page in pdf_in:
-            pdf_out.add_page() # صفحة واحدة فقط
-            
+            pdf_out.add_page() # الحفاظ على عدد الصفحات الأصلي
             blocks = page.get_text("blocks")
-            blocks.sort(key=lambda b: b[1]) # حل مشكلة العكس
+            # الترتيب من الأعلى للأسفل لضمان سلامة النص
+            blocks.sort(key=lambda b: b[1]) 
+
+            # تجميع نص الصفحة لتقليل عدد الطلبات (لتجنب الحظر)
+            full_text = "\n".join([b[4].strip() for b in blocks if b[4].strip()])
             
-            # تجميع نص الصفحة لتقليل عدد الطلبات (عشان ما ننحظر)
-            page_text = "\n".join([b[4].strip() for b in blocks if b[4].strip()])
-            
-            if page_text:
-                translated = translate_page_gemini(page_text)
+            if full_text:
+                translated = translate_safe(full_text)
                 for line in translated.split('\n'):
                     if line.strip():
                         pdf_out.multi_cell(0, 8, text=process_arabic(line), align='R')
                         pdf_out.ln(1)
             
-            time.sleep(4) # تأخير 4 ثواني لضمان عدم تجاوز الـ 15 طلب في الدقيقة
+            time.sleep(3) # تأخير بسيط للحفاظ على استقرار الـ API
 
         pdf_out.output(out_path)
         pdf_in.close()
 
         with open(out_path, "rb") as f:
-            await context.bot.send_document(chat_id=update.message.chat_id, document=f, caption="✅ تمت الترجمة بنجاح وبالمجان!")
+            await context.bot.send_document(chat_id=update.message.chat_id, document=f)
         
         await status_msg.delete()
         os.remove(in_path)
         os.remove(out_path)
-
     except Exception as e:
-        await update.message.reply_text(f"🔥 خطأ: {str(e)}")
+        await update.message.reply_text(f"خطأ: {str(e)}")
 
 if __name__ == "__main__":
     app = ApplicationBuilder().token(os.environ.get("BOT_TOKEN")).build()
