@@ -22,18 +22,27 @@ def run_health_check_server():
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
 def ai_translate(text):
-    """ترجمة أكاديمية طبية باستخدام ذكاء اصطناعي يفهم السياق"""
+    """إجبار البوت على الترجمة الأكاديمية باستخدام Gemini"""
+    # إذا كان النص قصيراً جداً أو أرقاماً، لا نترجمه للحفاظ على الترتيب
+    if len(text.strip()) < 5: 
+        return text
+        
     prompt = (
-        "You are an expert medical translator. Translate the following text into professional, "
-        "academic Arabic. Keep medical terms in English between parentheses. "
-        "Ensure the flow is natural and not literal: \n\n" + text
+        "Translate this medical text into professional Academic Arabic. "
+        "Keep technical terms in English between parentheses. "
+        "IMPORTANT: The output must be ONLY the Arabic translation. \n\n" 
+        f"Text: {text}"
     )
     try:
+        # هنا يتم استدعاء الذكاء الاصطناعي
         response = model.generate_content(prompt)
-        return response.text
-    except Exception as e:
-        print(f"AI Error: {e}")
+        if response.text:
+            return response.text
         return text
+    except Exception as e:
+        print(f"Translation Error: {e}")
+        return "حدث خطأ في الاتصال بمحرك الذكاء الاصطناعي"
+
 
 def process_arabic(text):
     if not text: return ""
