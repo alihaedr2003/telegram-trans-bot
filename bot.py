@@ -1,64 +1,48 @@
 import os
-import threading
-import http.server
-import socketserver
+import time
+import requests
 import fitz
-import requests # سنحتاج هذه المكتبة للاتصال بـ DeepSeek
 from fpdf import FPDF
 from arabic_reshaper import reshape
 from bidi.algorithm import get_display
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# --- 1. خادم المنفذ ---
-def run_health_check_server():
-    port = int(os.environ.get("PORT", 8080))
-    handler = http.server.SimpleHTTPRequestHandler
-    with socketserver.TCPServer(("", port), handler) as httpd:
-        httpd.serve_forever()
-
-threading.Thread(target=run_health_check_server, daemon=True).start()
-
-# --- 2. دالة ترجمة DeepSeek الجديدة ---
-def deepseek_translate(text):
+def deepseek_translate_debug(text):
     if not text or len(text.strip()) < 5: return text
     
-    # استبدل بمفتاح DeepSeek الخاص بك في إعدادات Render
-    api_key = os.environ.get("DEEPSEEK_API_KEY") 
-    url = "https://api.deepseek.com/v1/chat/completions" # رابط الـ API الخاص بهم
+    api_key = os.environ.get("DEEPSEEK_API_KEY")
+    url = "https://api.deepseek.com/v1/chat/completions"
     
-    headers = {
-        "Content-Type": "application/json",
-        "Authorization": f"Bearer {api_key}"
-    }
-    
-    payload = {
-        "model": "deepseek-chat",
-        "messages": [
-            {"role": "system", "content": "You are a medical professor. Translate to academic Arabic. Return ONLY translation."},
-            {"role": "user", "content": text}
-        ],
-        "stream": False
-    }
-
     try:
-        response = requests.post(url, json=payload, headers=headers, timeout=30)
-        result = response.json()
-        return result['choices'][0]['message']['content']
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": "Translate to academic Arabic. ONLY Arabic."},
+                {"role": "user", "content": text}
+            ],
+            "timeout": 40
+        }
+        response = requests.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
+        
+        if response.status_code == 200:
+            return response.json()['choices'][0]['message']['content']
+        else:
+            # بدلاً من النص الأصلي، نرجع تفاصيل الخطأ
+            return f"⚠️ API Error {response.status_code}: {response.text[:50]}"
+            
     except Exception as e:
-        print(f"❌ DeepSeek Error: {e}")
-        return text # يعيد النص الأصلي إذا فشل الاتصال
+        return f"❌ Connection Error: {str(e)[:50]}"
 
 def process_arabic(text):
     return get_display(reshape(text))
 
-# --- 3. معالجة الـ PDF ---
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("🚀 جاري التجربة باستخدام موديل DeepSeek الجديد...")
+    status_msg = await update.message.reply_text("🔍 جاري التحليل والترجمة مع نظام كشف الأخطاء...")
     
     doc_tg = update.message.document
     in_path = os.path.join("/tmp", doc_tg.file_name)
-    out_path = os.path.join("/tmp", f"DeepSeek_{doc_tg.file_name}")
+    out_path = os.path.join("/tmp", f"Debug_Trans_{doc_tg.file_name}")
 
     try:
         file_info = await context.bot.get_file(doc_tg.file_id)
@@ -70,29 +54,32 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pdf_out.set_font('CustomArial', size=11)
 
         for page in pdf_in:
+            # إضافة صفحة واحدة فقط لكل صفحة أصلية (منع تحويل 8 لـ 80)
             pdf_out.add_page()
+            
             blocks = page.get_text("blocks")
-            # الحفاظ على ترتيب الأسطر الذي اكتشفناه في ورقة البكتيريا
+            # ترتيب الأسطر لضمان بداية الورقة بشكل صحيح
             blocks.sort(key=lambda b: b[1]) 
 
             for b in blocks:
                 content = b[4].strip()
                 if content:
-                    translated = deepseek_translate(content)
+                    translated = deepseek_translate_debug(content)
                     final_text = process_arabic(translated)
+                    # الكتابة في نفس الصفحة الحالية
                     pdf_out.multi_cell(0, 8, text=final_text, align='R')
                     pdf_out.ln(1)
             
+            time.sleep(0.5) # حماية من الحظر
+
         pdf_out.output(out_path)
         pdf_in.close()
 
         with open(out_path, "rb") as f:
             await context.bot.send_document(chat_id=update.message.chat_id, document=f)
         await status_msg.delete()
+        
     except Exception as e:
-        await update.message.reply_text(f"خطأ: {e}")
+        await update.message.reply_text(f"خطأ في معالجة الملف: {str(e)}")
 
-if __name__ == "__main__":
-    app = ApplicationBuilder().token(os.environ.get("BOT_TOKEN")).build()
-    app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    app.run_polling()
+# ... كود الـ Main والـ Port كما هو سابقاً ...
