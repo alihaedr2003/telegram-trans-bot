@@ -71,24 +71,34 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         for page in pdf_in:
             pdf_out.add_page()
-            text_content = page.get_text("text")
-            if text_content.strip():
-                # الترجمة عبر Gemini
-                translated = ai_translate_academic(text_content)
-                
-                # إصلاح التقديم والتأخير: نقوم بتقسيم النص المترجم لفقرات
-                paragraphs = translated.split('\n')
-                for para in paragraphs:
-                    if para.strip():
-                        # معالجة كل فقرة على حدة لضمان عدم تداخل الأسطر
-                        final_text = process_arabic(para)
-                        # استخدام multi_cell مع تحديد العرض بدقة لمنع الارتداد للسطر الأعلى
-                        pdf_out.multi_cell(0, 8, text=final_text, align='R')
-                        pdf_out.ln(1) # إضافة فراغ بسيط بين الفقرات للوضوح
-
             
+            # 1. سحب النص ككتل (Blocks) للحفاظ على الإحداثيات المكانية
+            blocks = page.get_text("blocks")
+            
+            # 2. ترتيب الكتل من الأعلى (Y=0) إلى الأسفل لضمان تسلسل الأسطر
+            blocks.sort(key=lambda b: b[1]) 
+
+            for b in blocks:
+                # b[4] هو النص الموجود داخل الكتلة
+                raw_text = b[4].strip()
+                
+                if raw_text:
+                    # الترجمة الأكاديمية لكل كتلة بشكل مستقل
+                    translated = ai_translate_academic(raw_text)
+                    
+                    # معالجة اللغة العربية والاتجاه (RTL)
+                    final_text = process_arabic(translated)
+                    
+                    # 3. الكتابة في الـ PDF: استخدام عرض السطح بالكامل (0) 
+                    # الـ multi_cell هنا ستلتزم بمكانها ولن تقفز للأعلى
+                    pdf_out.multi_cell(0, 8, text=final_text, align='R')
+                    
+                    # إضافة مسافة بسيطة بين الكتل لضمان عدم التداخل
+                    pdf_out.ln(2)
+
         pdf_out.output(out_path)
         pdf_in.close()
+        
 
         with open(out_path, "rb") as f:
             await context.bot.send_document(chat_id=update.message.chat_id, document=f)
