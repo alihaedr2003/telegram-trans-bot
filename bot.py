@@ -5,112 +5,86 @@ import socketserver
 import fitz  # PyMuPDF
 from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
+from docx.shared import Pt
 from deep_translator import GoogleTranslator
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, ContextTypes, filters
 
-# --- 1. إعداد خادم وهمي لإبقاء البوت حياً على Render ---
+# --- 1. خادم لضمان استمرار الخدمة على Render ---
 def run_health_check_server():
     port = int(os.environ.get("PORT", 8080))
     handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", port), handler) as httpd:
-        print(f"Health check server running on port {port}")
         httpd.serve_forever()
 
-# تشغيل الخادم في Thread منفصل لتجنب إيقاف البوت
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
-# --- 2. إعدادات البوت والترجمة ---
+# --- 2. إعدادات البوت ---
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "أهلاً بك في نظام الترجمة الأكاديمية.\n\n"
-        "قم بإرسال ملف PDF، وسأقوم بترجمة محتواه بدقة مع الحفاظ على ترتيب الفقرات، "
-        "وسأرسل لك النتيجة في ملف Word منسق."
-    )
+    await update.message.reply_text("مرحباً بك في نظام الترجمة الأكاديمية. أرسل ملف PDF وسأقوم بتحويله لملف Word مترجم ومنسق.")
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # رسالة انتظار للمستخدم
-    status_msg = await update.message.reply_text("📥 جاري استلام الملف وتحليله أكاديمياً...")
+    status_msg = await update.message.reply_text("⌛ جاري تحليل النص الأكاديمي وتجميع الفقرات...")
     
     document_tg = update.message.document
-    if document_tg.mime_type != "application/pdf":
-        await status_msg.edit_text("عذراً، يجب أن يكون الملف بصيغة PDF فقط.")
-        return
-
-    # مسارات الملفات المؤقتة في رندر
     input_path = os.path.join("/tmp", document_tg.file_name)
     output_filename = f"Translated_{document_tg.file_name.replace('.pdf', '.docx')}"
     output_path = os.path.join("/tmp", output_filename)
 
     try:
-        # تحميل الملف من تليجرام
         tg_file = await context.bot.get_file(document_tg.file_id)
         await tg_file.download_to_drive(input_path)
 
-        # فتح الـ PDF
+        # فتح PDF وإنشاء Word
         pdf_doc = fitz.open(input_path)
         word_doc = Document()
         
-        # إعداد المترجم
         translator = GoogleTranslator(source='auto', target='ar')
         
-        await status_msg.edit_text("📖 جاري استخراج الفقرات وترجمتها... قد يستغرق ذلك وقتاً حسب حجم الملف.")
-
+        # استخراج النص بذكاء (تجميع الفقرات المقطعة)
+        full_academic_text = ""
         for page in pdf_doc:
-            # قراءة النصوص على شكل كتل (Blocks) للحفاظ على السياق العلمي
-            blocks = page.get_text("blocks")
-            # ترتيب الكتل من الأعلى للأسفل لضمان منطقية القراءة
-            blocks.sort(key=lambda b: (b[1], b[0])) 
+            # استخدام get_text("text") يسحب النص بترتيبه الطبيعي
+            full_academic_text += page.get_text("text") + " "
 
-            for b in blocks:
-                original_text = b[4].replace('\n', ' ').strip()
+        # تنظيف النص من التقطعات السطرية الزائدة التي تسببها ملفات الـ PDF
+        clean_text = full_academic_text.replace('\n', ' ').replace('  ', ' ')
+        
+        # تقسيم النص لفقرات كبيرة لترجمتها (كل 1500 حرف لضمان السياق)
+        chunks = [clean_text[i:i+1500] for i in range(0, len(clean_text), 1500)]
+        
+        await status_msg.edit_text(f"🚀 جاري ترجمة {len(chunks)} كتلة نصية...")
+
+        for chunk in chunks:
+            if len(chunk.strip()) > 10:
+                translated_part = translator.translate(chunk)
                 
-                # ترجمة الكتل النصية التي تحتوي على محتوى حقيقي فقط
-                if len(original_text) > 20:
-                    try:
-                        translated_text = translator.translate(original_text)
-                        
-                        # إضافة الفقرة لملف Word وتنسيقها للعربية
-                        p = word_doc.add_paragraph(translated_text)
-                        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT # محاذاة من اليمين لليسار
-                    except:
-                        continue # في حال فشلت ترجمة كتلة معينة يستمر في الباقي
+                # إضافة الفقرة للـ Word مع تنسيق احترافي
+                p = word_doc.add_paragraph(translated_part)
+                p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+                # تحسين الخط ليكون مريحاً للقراءة الأكاديمية
+                run = p.runs[0]
+                run.font.size = Pt(12)
+                run.font.name = 'Arial'
 
-        # حفظ ملف الـ Word النهائي
         word_doc.save(output_path)
         pdf_doc.close()
 
-        # إرسال الملف المترجم للمستخدم
-        await status_msg.edit_text("✅ تمت الترجمة بنجاح! جاري رفع الملف...")
+        await status_msg.edit_text("✅ اكتملت الترجمة. جاري رفع ملف الـ Word...")
         with open(output_path, "rb") as f:
-            await context.bot.send_document(
-                chat_id=update.message.chat_id,
-                document=f,
-                caption="تفضل، هذا ملفك المترجم منسق بصيغة Word."
-            )
+            await context.bot.send_document(chat_id=update.message.chat_id, document=f)
         
-        # حذف الملفات المؤقتة لتوفير المساحة
-        if os.path.exists(input_path): os.remove(input_path)
-        if os.path.exists(output_path): os.remove(output_path)
         await status_msg.delete()
+        os.remove(input_path)
+        os.remove(output_path)
 
     except Exception as e:
-        print(f"Error: {e}")
-        await status_msg.edit_text(f"حدث خطأ تقني أثناء المعالجة: {str(e)}")
+        await status_msg.edit_text(f"❌ عذراً، حدث خطأ: {str(e)}")
 
-# --- 3. تشغيل التطبيق ---
 if __name__ == "__main__":
-    if not BOT_TOKEN:
-        print("Error: BOT_TOKEN is missing!")
-    else:
-        # بناء التطبيق
-        application = ApplicationBuilder().token(BOT_TOKEN).build()
-        
-        # إضافة المعالجات
-        application.add_handler(CommandHandler("start", start))
-        application.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-        
-        print("Academic Bot is live and running...")
-        application.run_polling()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+    app.run_polling()
