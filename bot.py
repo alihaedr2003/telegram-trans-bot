@@ -25,16 +25,14 @@ genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
 model = genai.GenerativeModel('gemini-1.5-flash')
 
 def ai_translate_page(text):
-    if not text or len(text.strip()) < 5: return text
-    # برومبت مكثف لترجمة صفحة كاملة بطلب واحد
-    prompt = f"Translate this text to academic Arabic. Maintain structure. Output only Arabic:\n\n{text}"
     try:
-        response = model.generate_content(prompt)
-        return response.text if response.text else text
+        response = model.generate_content(text)
+        return response.text
     except Exception as e:
-        print(f"⚠️ Error: {e}")
-        time.sleep(2) # تأخير بسيط في حال وجود ضغط
+        # هذا السطر سيخبرنا في الـ Logs بالسبب الحقيقي (حظر، منطقة، أو مفتاح)
+        print(f"🛑 Google API Feedback: {str(e)}") 
         return text
+        
 
 def process_arabic(text):
     return get_display(reshape(text))
