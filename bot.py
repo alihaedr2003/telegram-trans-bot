@@ -86,4 +86,8 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-    app.run_polling()
+    
+    # إضافة drop_pending_updates لتنظيف الرسائل العالقة عند التشغيل
+    print("Academic Bot is starting and cleaning old updates...")
+    app.run_polling(drop_pending_updates=True)
+    
