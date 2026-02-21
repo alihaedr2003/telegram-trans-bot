@@ -1,59 +1,48 @@
 import os
 import time
-import requests
 import fitz
 import threading
 import http.server
 import socketserver
+import google.generativeai as genai
 from fpdf import FPDF
 from arabic_reshaper import reshape
 from bidi.algorithm import get_display
 from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes
 
-# --- 1. خادم المنفذ لضمان بقاء البوت حياً في Render ---
+# --- 1. خادم المنفذ ---
 def run_health_check_server():
     port = int(os.environ.get("PORT", 8080))
     handler = http.server.SimpleHTTPRequestHandler
     with socketserver.TCPServer(("", port), handler) as httpd:
-        print(f"📡 Port {port} is active")
         httpd.serve_forever()
 
 threading.Thread(target=run_health_check_server, daemon=True).start()
 
-# --- 2. دالة الترجمة مع نظام كشف الأخطاء ---
-def deepseek_translate_debug(text):
-    if not text or len(text.strip()) < 5: return text
-    api_key = os.environ.get("DEEPSEEK_API_KEY")
-    url = "https://api.deepseek.com/v1/chat/completions"
-    
+# --- 2. إعداد Gemini (المجاني والقوي) ---
+genai.configure(api_key=os.environ.get("GEMINI_API_KEY"))
+model = genai.GenerativeModel('gemini-1.5-flash')
+
+def translate_page_gemini(text):
+    if not text or len(text.strip()) < 10: return text
+    prompt = f"Translate this medical text to academic Arabic. Return ONLY Arabic:\n\n{text}"
     try:
-        payload = {
-            "model": "deepseek-chat",
-            "messages": [
-                {"role": "system", "content": "Translate to academic Arabic. ONLY Arabic."},
-                {"role": "user", "content": text}
-            ],
-            "timeout": 40
-        }
-        response = requests.post(url, json=payload, headers={"Authorization": f"Bearer {api_key}"})
-        if response.status_code == 200:
-            return response.json()['choices'][0]['message']['content']
-        else:
-            return f"⚠️ API Error {response.status_code}: {response.text[:30]}"
+        response = model.generate_content(prompt)
+        return response.text if response.text else text
     except Exception as e:
-        return f"❌ Error: {str(e)[:30]}"
+        return f"⚠️ Gemini Error: {str(e)[:30]}"
 
 def process_arabic(text):
     return get_display(reshape(text))
 
-# --- 3. معالجة الـ PDF (النسخة المنضبطة 8 صفحات) ---
+# --- 3. المعالجة الذكية (منع الـ 80 صفحة وعلاج العكس) ---
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    status_msg = await update.message.reply_text("🔍 جاري المعالجة (نظام الترتيب الصحيح وكشف الأخطاء)...")
+    status_msg = await update.message.reply_text("🧬 جاري الترجمة بجيميني (نظام الصفحة الواحدة)...")
     
     doc_tg = update.message.document
     in_path = os.path.join("/tmp", doc_tg.file_name)
-    out_path = os.path.join("/tmp", f"Translated_{doc_tg.file_name}")
+    out_path = os.path.join("/tmp", f"Medical_Final_{doc_tg.file_name}")
 
     try:
         file_info = await context.bot.get_file(doc_tg.file_id)
@@ -65,41 +54,37 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
         pdf_out.set_font('CustomArial', size=11)
 
         for page in pdf_in:
-            pdf_out.add_page() # صفحة واحدة لكل صفحة أصلية
-            blocks = page.get_text("blocks")
-            blocks.sort(key=lambda b: b[1]) # الترتيب من الأعلى للأسفل
-
-            for b in blocks:
-                content = b[4].strip()
-                if content:
-                    translated = deepseek_translate_debug(content)
-                    final_text = process_arabic(translated)
-                    pdf_out.multi_cell(0, 8, text=final_text, align='R')
-                    pdf_out.ln(1)
+            pdf_out.add_page() # صفحة واحدة فقط
             
-            time.sleep(0.5)
+            blocks = page.get_text("blocks")
+            blocks.sort(key=lambda b: b[1]) # حل مشكلة العكس
+            
+            # تجميع نص الصفحة لتقليل عدد الطلبات (عشان ما ننحظر)
+            page_text = "\n".join([b[4].strip() for b in blocks if b[4].strip()])
+            
+            if page_text:
+                translated = translate_page_gemini(page_text)
+                for line in translated.split('\n'):
+                    if line.strip():
+                        pdf_out.multi_cell(0, 8, text=process_arabic(line), align='R')
+                        pdf_out.ln(1)
+            
+            time.sleep(4) # تأخير 4 ثواني لضمان عدم تجاوز الـ 15 طلب في الدقيقة
 
         pdf_out.output(out_path)
         pdf_in.close()
 
-        # إرسال الملف المترجم للمستخدم
         with open(out_path, "rb") as f:
-            await context.bot.send_document(chat_id=update.message.chat_id, document=f, caption="✅ اكتملت الترجمة الأكاديمية بنجاح.")
+            await context.bot.send_document(chat_id=update.message.chat_id, document=f, caption="✅ تمت الترجمة بنجاح وبالمجان!")
         
         await status_msg.delete()
         os.remove(in_path)
         os.remove(out_path)
 
     except Exception as e:
-        await update.message.reply_text(f"🔥 خطأ تقني: {str(e)}")
+        await update.message.reply_text(f"🔥 خطأ: {str(e)}")
 
-# --- 4. تشغيل البوت ---
 if __name__ == "__main__":
-    TOKEN = os.environ.get("BOT_TOKEN")
-    if not TOKEN:
-        print("❌ Missing BOT_TOKEN")
-    else:
-        app = ApplicationBuilder().token(TOKEN).build()
-        app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
-        print("🚀 البوت يعمل الآن بكامل طاقته...")
-        app.run_polling(drop_pending_updates=True)
+    app = ApplicationBuilder().token(os.environ.get("BOT_TOKEN")).build()
+    app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
+    app.run_polling(drop_pending_updates=True)
