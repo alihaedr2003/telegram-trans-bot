@@ -1,7 +1,6 @@
-google-generativeai>=0.3.0
+google-generativeai==0.4.1
 python-telegram-bot==20.8
-PyMuPDF
-fpdf2
-arabic-reshaper
-python-bidi
-
+PyMuPDF==1.23.22
+fpdf2==2.7.8
+arabic-reshaper==3.0.0
+python-bidi==0.4.2
